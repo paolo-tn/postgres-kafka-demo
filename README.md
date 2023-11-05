@@ -49,6 +49,12 @@ docker build -t debezium-connect -f debezium.Dockerfile .
 docker-compose up -d
 ```
 
+## check postgres wal_level
+```
+select * from pg_settings where name ='wal_level';
+or via psql
+postgres@localhost:postgres> SHOW wal_level
+```
 ## Loading data into Postgres
 
 We will bring up a container with a psql command line, mount our local data
@@ -61,10 +67,14 @@ docker run -it --rm --network=postgres-kafka-demo_default \
          postgres:11.0 psql -h postgres -U postgres
 ```
 
+
 Password = postgres
 
-At the command line:
+Open the powershell available with the postgres container and at the command line:
+psql -h localhost -U postgres -p 5432
 
+or
+docker exec -it b87b96279fd6 psql -h postgres -U postgres
 ```
 CREATE DATABASE students;
 \connect students;
@@ -91,17 +101,22 @@ PRIMARY KEY (student_id));
 ```
 
 ## Connect Postgres database as a source to Kafka
+## load the json file to kafka connect (port 8083)
 
 The postgres-source.json file contains the configuration settings needed to
 sink all of the students database to Kafka.
 
 ```
-curl -X POST -H "Accept:application/json" -H "Content-Type: application/json" \
-      --data @postgres-source.json http://localhost:8083/connectors
+curl -X POST -H "Accept:application/json" -H "Content-Type: application/json" --data @postgres-source.json http://localhost:8083/connectors
 ```
 
 The connector 'postgres-source' should show up when curling for the list
 of existing connectors:
+curl --location --request GET 'http://localhost:8083/connectors' \
+--header 'Accept: application/json'
+
+TO DELETE THE CONNECTOR
+--curl -X DELETE http://localhost:8083/connectors/postgres-source    
 
 ```
 curl -H "Accept:application/json" localhost:8083/connectors/
@@ -110,8 +125,10 @@ curl -H "Accept:application/json" localhost:8083/connectors/
 The two tables in the `students` database will now show up as topics in Kafka.
 You can check this by entering the Kafka container:
 
+open debezium connect container
 ```
 docker exec -it <kafka-container-id> /bin/bash
+docker exec -it fb350d45a429 /bin/bash  //get container id from docker ps
 ```
 
 and listing the available topics:
@@ -129,8 +146,11 @@ docker run --network postgres-kafka-demo_default \
            --interactive --tty --rm \
            confluentinc/cp-ksql-cli:latest \
            http://ksql-server:8088
-```
 
+```
+docker-compose -f docker-compose-ksql.yml exec ksql-cli ksql http://ksql-server:8088
+docker exec -it 545fc5ac48b7 ksql-cli ksql http://ksql-server:8088
+```
 To see your updates, a few settings need to be configured by first running:
 
 ```
@@ -147,8 +167,7 @@ KSQL streams to auto update KSQL tables mirroring the Postgres tables:
 ```
 SHOW TOPICS;
 
-CREATE STREAM admission_src (student_id INTEGER, gre INTEGER, toefl INTEGER, cpga DOUBLE, admit_chance DOUBLE)\
-WITH (KAFKA_TOPIC='dbserver1.public.admission', VALUE_FORMAT='AVRO');
+CREATE STREAM admission_src (student_id INTEGER, gre INTEGER, toefl INTEGER, cpga DOUBLE, admit_chance DOUBLE)WITH (KAFKA_TOPIC='dbserver1.public.admission', VALUE_FORMAT='AVRO');
 
 CREATE STREAM admission_src_rekey WITH (PARTITIONS=1) AS \
 SELECT * FROM admission_src PARTITION BY student_id;
@@ -204,8 +223,7 @@ The postgres-sink.json configuration file will create a RESEARCH_AVE_BOOST
 table and send the data back to Postgres.
 
 ```
-curl -X POST -H "Accept:application/json" -H "Content-Type: application/json" \
-      --data @postgres-sink.json http://localhost:8083/connectors
+curl -X POST -H "Accept:application/json" -H "Content-Type: application/json" --data @postgres-sink.json http://localhost:8083/connectors
 ```
 
 ## Update the source Postgres tables and watch the Postgres sink table update
